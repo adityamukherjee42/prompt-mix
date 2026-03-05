@@ -25,6 +25,7 @@ export default function App() {
   const [template, setTemplate] = useState('{persona}\n{context}\n\nTask: {task}\n\nConstraints: {instructions}')
   const [task, setTask] = useState('What advice would you give someone trying to improve their writing?')
   const [dimensions, setDimensions] = useState(defaultDimensions)
+  const [newPlaceholder, setNewPlaceholder] = useState('')
   const [expectedSubstring, setExpectedSubstring] = useState('')
   const [regex, setRegex] = useState('')
   const [keywords, setKeywords] = useState('')
@@ -37,10 +38,23 @@ export default function App() {
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
 
-  const totalCombinations = useMemo(
-    () => Object.values(dimensions).reduce((acc, arr) => acc * (Array.isArray(arr) ? arr.length : 0), 1),
-    [dimensions]
-  )
+  const usedPlaceholders = useMemo(() => {
+    const found = new Set()
+    const re = /\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g
+    let match
+    while ((match = re.exec(template)) !== null) {
+      found.add(match[1])
+    }
+    return Array.from(found)
+  }, [template])
+
+  const totalCombinations = useMemo(() => {
+    if (!usedPlaceholders.length) return 1
+    return usedPlaceholders.reduce((acc, key) => {
+      const values = (dimensions[key] || []).map((v) => v.trim()).filter(Boolean)
+      return acc * Math.max(values.length, 1)
+    }, 1)
+  }, [dimensions, usedPlaceholders])
 
   function updateBlock(section, index, value) {
     setDimensions((prev) => ({
@@ -63,14 +77,44 @@ export default function App() {
     }))
   }
 
+  function addPlaceholderSection() {
+    const name = newPlaceholder.trim()
+    if (!name) return
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+      setError('Placeholder names must match [a-zA-Z_][a-zA-Z0-9_]*')
+      return
+    }
+    if (dimensions[name]) {
+      setError(`Placeholder "${name}" already exists.`)
+      return
+    }
+    setError('')
+    setDimensions((prev) => ({ ...prev, [name]: [''] }))
+    setNewPlaceholder('')
+  }
+
+  function removePlaceholderSection(section) {
+    setDimensions((prev) => {
+      const next = { ...prev }
+      delete next[section]
+      return next
+    })
+  }
+
   async function runEvaluation() {
     setLoading(true)
     setError('')
     setResult(null)
 
-    const mergedDimensions = {
-      ...dimensions,
-      task: [task],
+    const mergedDimensions = {}
+    for (const key of usedPlaceholders) {
+      const cleaned = key === 'task' ? [task.trim()].filter(Boolean) : (dimensions[key] || []).map((v) => v.trim()).filter(Boolean)
+      if (!cleaned.length) {
+        setLoading(false)
+        setError(`Placeholder "{${key}}" is used in template but has no values.`)
+        return
+      }
+      mergedDimensions[key] = cleaned
     }
 
     const payload = {
@@ -173,7 +217,7 @@ export default function App() {
                 <h2 className={sectionStyle[section] || ''}>
                   <span className="dot" /> {prettyName(section)}
                 </h2>
-                <span>{dimensions[section].length} active</span>
+                <span>{usedPlaceholders.includes(section) ? `${dimensions[section].length} active` : 'unused'}</span>
               </div>
 
               {dimensions[section].map((block, idx) => (
@@ -190,16 +234,41 @@ export default function App() {
                 </div>
               ))}
 
-              <button type="button" className="addBtn" onClick={() => addBlock(section)}>
-                + add {section} block
-              </button>
+              <div className="sectionActions">
+                <button type="button" className="addBtn" onClick={() => addBlock(section)}>
+                  + add {section} block
+                </button>
+                <button type="button" className="deleteSectionBtn" onClick={() => removePlaceholderSection(section)}>
+                  remove placeholder
+                </button>
+              </div>
             </section>
           ))}
+
+          <div className="addPlaceholderWrap">
+            <label>Add Placeholder</label>
+            <div className="addPlaceholderRow">
+              <input
+                value={newPlaceholder}
+                onChange={(e) => setNewPlaceholder(e.target.value)}
+                placeholder="e.g. tone, audience, format"
+              />
+              <button type="button" onClick={addPlaceholderSection}>
+                + add
+              </button>
+            </div>
+            <div className="hintText">
+              Use in template as <code>{'{placeholder_name}'}</code>. Only used placeholders are evaluated.
+            </div>
+          </div>
 
           <details className="advanced">
             <summary>Advanced Settings</summary>
             <label>Template (Python placeholders)</label>
             <textarea rows={4} value={template} onChange={(e) => setTemplate(e.target.value)} />
+            <div className="hintText">
+              Placeholders in use: {usedPlaceholders.length ? usedPlaceholders.join(', ') : 'none'}
+            </div>
 
             <div className="twoCol">
               <div>
